@@ -1,0 +1,204 @@
+###
+# Copyright 2012 Nima Johari and Aylien, Inc.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+###
+
+require 'highline/import'
+require 'net/http'
+require 'json'
+require 'fileutils'
+require 'docopt'
+require 'terminal-table'
+puts '                             _                    '
+puts '             _              | |                   '
+puts '  ___   ____| |_  ___   ____| | ___  ____   ____  '
+puts ' / _ \ / ___)  _)/ _ \ / ___) |/ _ \|  _ \ / _  ) '
+puts '| |_| ( (___| |_| |_| ( (___| | |_| | | | ( (/ /  '
+puts ' \___/ \____)\___)___/ \____)_|\___/|_| |_|\____) '
+puts '                                                  '
+doc = "Usage: octoclone options
+
+  -h --help                     Show this.
+  -u USER --user=USERNAME       GitHub username
+  -k --add_key                  add key to the GitHub account
+  -x --remove_key               remove keys from the GitHub account interactively
+  -i PATH --key_path=PATH       path to public key [default: ~/.ssh/id_rsa.pub]
+  -c --clone                    clone repos to the target directory
+  --public                      do not authenticate, clone only public repos
+  --organ                       given id is an organ
+  -a --archive                  make a tar archive
+  --s3                          uploads tarball to s3
+  -f --backup_file BACKUP_FILE  path to tar file [default: /tmp/octoclone_backup.tgz]
+  -d --target_dir=TARGET        Specify target directory [default: /tmp/octoclone_out/]"
+options = Docopt(doc, version=nil, help=true)
+require 'aws/s3'
+require 'yaml'
+config = YAML.load_file "s3_cred.yml"
+begin
+  repos = []
+  user ||= options[:user]
+  user ||= ask("GitHub username: ")
+  unless options[:public]
+    pass ||= ask("Enter password and press Enter: ") { |q| q.echo = false }
+  end
+  target_dir = File.expand_path(options[:target_dir])
+  key_path = options[:key_path]
+  github_uri = URI("https://api.github.com/")
+  Net::HTTP.start(github_uri.host, github_uri.port, :use_ssl => true) do |http|
+    if options[:add_key] then
+      key_path = File.expand_path(options[:key_path])
+      key_title = "%s@%s:%s:octoclone" % [ENV["USERNAME"], `hostname`.strip, Time.now.to_i]
+      puts 'adding "%s" as "%s" to "%s" on GitHub' % [key_path, key_title, user]
+
+      github_response = {:title => key_title, :key => File.read(key_path)}
+      keys_uri = URI.parse('https://api.github.com/user/keys')
+      request = Net::HTTP::Post.new(keys_uri.request_uri)
+      request.basic_auth(user, pass)
+      request.body = github_response.to_json
+      response = http.request(request)
+
+      case response
+      when Net::HTTPSuccess then
+        puts "successfuly added key!"
+      else
+        $stderr.puts "ERROR: failed to add_key"
+        $stderr.puts "GitHub said: "
+        $stderr.puts response.body
+        exit 1
+      end
+    end
+    if options[:clone] then
+      puts "creating directory %s" % target_dir
+      FileUtils.mkdir_p target_dir
+      if options[:public] then
+        uri = URI.parse('https://api.github.com/users/%s/repos' % user)
+        request = Net::HTTP::Get.new(uri.request_uri)
+        response = http.request(request)
+      else
+        uri = URI.parse('https://api.github.com/user/repos')
+        request = Net::HTTP::Get.new(uri.request_uri)
+        request.basic_auth(user, pass)
+        response = http.request(request)
+      end
+      case response
+      when Net::HTTPSuccess then
+        repos = JSON.parse(response.body)
+        puts "found %d repos.." % repos.length
+        report = {}
+        repos.each_with_index do |repo, repo_number|
+          repo_number += 1
+          puts "cloning %s (%d/%d)" % [repo["full_name"], repo_number, repos.length]
+          puts repo["description"]
+          git_command = %Q(git clone #{repo["ssh_url"]} #{repo["full_name"]})
+          puts
+          puts "running %s" % git_command
+          Dir.chdir(options[:target_dir]) {
+            %x[#{git_command}]
+            if $? == 32768 then
+              $stderr.puts "it seems destination path already exists.. attempting to pull"
+              Dir.chdir(repo["full_name"]) {
+                puts "running git pull"
+                %x[git pull]
+                if $? == 0 then
+                  report[repo["full_name"]] ||= "successfuly pulled"
+                else
+                  report[repo["full_name"]] ||= "failed pulling"
+                end
+              }
+            elsif $? == 0 then
+              report[repo["full_name"]] ||= "successfuly cloned"
+            else
+              report[repo["full_name"]] ||= "git error"
+            end
+          }
+        end
+        puts Terminal::Table.new(:rows =>
+                                 report.enum_for(:each_with_index).
+                                 collect { |v, i| [i+1] + v })
+      else
+        $stderr.puts "GitHub error", response.body
+      end
+    end
+    if options[:remove_key] then
+      stop_asking = false
+      until stop_asking do
+        keys_uri = URI.parse('https://api.github.com/user/keys')
+        request = Net::HTTP::Get.new(keys_uri.request_uri)
+        request.basic_auth(user, pass)
+        response = http.request(request)
+        case response
+        when Net::HTTPSuccess then
+          keys = JSON.parse(response.body)
+          choose do |menu|
+            menu.prompt = "Choose a key to delete (q to exit): "
+            menu.hidden("q") { stop_asking = true }
+            keys.each do |key|
+              menu.choice(key["title"]) do
+                sure = ask('Type "delete" to remove "%s"? ' % key["title"])
+                if sure == "delete" then
+                  key_remove_uri = URI.parse('https://api.github.com/user/keys/%s' % key["id"])
+                  request = Net::HTTP::Delete.new(key_remove_uri.request_uri)
+                  request.basic_auth(user, pass)
+                  response = http.request(request)
+                  case response
+                  when Net::HTTPSuccess then
+                    puts '"%s" deleted successfuly.' % key["title"]
+                  else
+                    $stderr.puts "ERROR: failed to remove key"
+                    $stderr.puts "GitHub said: "
+                    $stderr.puts response.body
+                  end
+                end
+              end
+            end
+          end
+        else
+          $stderr.puts "ERROR: failed to retrieve key list"
+          $stderr.puts "GitHub said: "
+          $stderr.puts response.body
+          exit 1
+        end
+      end
+    end
+    if options[:archive] then
+      Dir.chdir(options[:target_dir]) {
+        tar_repos = []
+        repos.each do |repo|
+          $stderr.puts "adding %s to tar archive" % repo["full_name"]
+          tar_repos.push(repo["full_name"])
+        end
+        tar_command = %Q[tar -czf #{options[:backup_file]} #{tar_repos.join(" ")}]
+        $stderr.puts "running %s" % tar_command
+        %x[#{tar_command}]
+        if $? == 0 then
+          $stderr.puts "tar archive made on %s" % options[:backup_file]
+          if options[:s3] then
+            $stderr.puts "uploading to s3"
+            AWS::S3::Base.establish_connection!(
+                                                :access_key_id     => config["key_id"],
+                                                :secret_access_key => config["secret"]
+                                                )
+            file = Time.new.strftime("%Y-%m-%d_%H-%M-%S_") + File.basename(options[:backup_file])
+            AWS::S3::S3Object.store(file, open(options[:backup_file]), config["bucket"])
+            $stderr.puts "successfuly uploaded '%s' to bucket `%s` on s3" % [file, config["bucket"]]
+          end
+        else
+          $stderr.puts "tar error!"
+        end
+      }
+    end
+  end
+rescue Interrupt
+  puts "Exiting..."
+end
