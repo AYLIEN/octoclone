@@ -1,24 +1,25 @@
 Octoclone
 =========
 
-                    
-                 _              | |                   
-      ___   ____| |_  ___   ____| | ___  ____   ____  
-     / _ \ / ___)  _)/ _ \ / ___) |/ _ \|  _ \ / _  ) 
-    | |_| ( (___| |_| |_| ( (___| | |_| | | | ( (/ /  
-     \___/ \____)\___)___/ \____)_|\___/|_| |_|\____) 
-                                                      
 
-A GitHub backup solution that just works! 
+                 _              | |
+      ___   ____| |_  ___   ____| | ___  ____   ____
+     / _ \ / ___)  _)/ _ \ / ___) |/ _ \|  _ \ / _  )
+    | |_| ( (___| |_| |_| ( (___| | |_| | | | ( (/ /
+     \___/ \____)\___)___/ \____)_|\___/|_| |_|\____)
+
+
+A GitHub backup solution that just works!
 (based on GitHub API v3)
 
 Installation
 ------------
 
-Make sure you have rvm (https://rvm.io/) installed with ruby >= 1.9.2,
-then run
+octoclone is available through rubygems and known to work with ruby 1.9.
+to install, just type
 
-    $ bundle install
+    $ gem install octoclone
+
 
 Usage
 -----
@@ -26,19 +27,19 @@ Make sure that the key file of the entered username is added to GitHub (entering
 
 You may add `~/.ssh/id_rsa.pub` to your GitHub account by running
 
-    $ ruby octoclone.rb -k
+    $ octoclone -k
 
 Or if you want to add a custom key, run
 
-    $ ruby octoclone.rb -ki "~/.ssh/id_dsa.pub"
+    $ octoclone -ki "~/.ssh/id_dsa.pub"
 
 You may remove keys interactively with
 
-    $ ruby octoclone.rb -x
+    $ octoclone -x
 
 Now you may run
 
-    $ ruby octoclone.rb -cd "/path/to/backup/dir"
+    $ octoclone -cd "/path/to/backup/dir"
 
 Tarballs
 --------
@@ -56,11 +57,11 @@ needs the `-c` option to clone files. The uploaded tarball will be named like `2
 
 So to backup all your repos, tarball them and upload them to S3, simply run:
 
-    $ ruby octoclone.rb -ca --s3
+    $ octoclone -ca --s3
 
 by default, tarball and cloned files are stored in `/tmp`.
 
 Further help
 ------------
 
-    $ ruby octoclone.rb --help
+    $ octoclone --help
