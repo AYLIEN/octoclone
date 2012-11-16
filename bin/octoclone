@@ -1,6 +1,7 @@
+#!/usr/bin/env ruby
 ###
 # Copyright 2012 Nima Johari and Aylien, Inc.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 # "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 # LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -44,7 +45,20 @@ doc = "Usage: octoclone options
 options = Docopt(doc, version=nil, help=true)
 require 'aws/s3'
 require 'yaml'
-config = YAML.load_file "s3_cred.yml"
+config_path = File.expand_path("~/.octoclone.yml")
+begin
+  config = YAML.load_file(File.expand_path(config_path))
+rescue
+  config_str = ["key_id: YOUR_ACCESS_KEY_ID",
+                "secret: YOUR_SECRET_ACCESS_KEY",
+                "bucket: YOUR_BUCKET_NAME"].join("\n")
+  File.open(config_path, 'w') do |file|
+    file.write(config_str)
+  end
+  puts "created %s" % config_path
+  puts "update it with your credientials."
+  exit
+end
 begin
   repos = []
   user ||= options[:user]
