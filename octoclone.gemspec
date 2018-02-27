@@ -48,7 +48,7 @@ Gem::Specification.new do |s|
   ## List your runtime dependencies here. Runtime dependencies are those
   ## that are needed for an end user to actually USE your code.
   s.add_dependency('highline', "1.6.13")
-  s.add_dependency('json', "1.7.3")
+  s.add_dependency('json', "1.7.7")
   s.add_dependency('docopt', "0.0.4")
   s.add_dependency('terminal-table', "1.4.5")
   s.add_dependency('aws-s3', "0.6.3")
